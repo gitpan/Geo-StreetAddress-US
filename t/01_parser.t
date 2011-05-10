@@ -1,5 +1,5 @@
 use blib;
-use Test::More tests => 43;
+use Test::More;
 use strict;
 use warnings;
 use Data::Dumper;
@@ -170,6 +170,30 @@ my %address = (
 	      'suffix' => 'E',
 	      'prefix' => 'S'
 	    },
+    "550 S 400 E #3206, Salt Lake City UT 84111" => {
+            'number' => '550',
+            'street' => '400',
+            'state' => 'UT',
+            'sec_unit_num' => '3206',
+            'zip' => '84111',
+            'city' => 'Salt Lake City',
+            'suffix' => 'E',
+            'type' => '',
+            'sec_unit_type' => '#',
+            'prefix' => 'S'
+    },
+    "6641 N 2200 W Apt D304 Park City, UT 84098" => {
+          'number' => '6641',
+          'street' => '2200',
+          'state' => 'UT',
+          'sec_unit_num' => 'D304',
+          'zip' => '84098',
+          'city' => 'Park City',
+          'suffix' => 'W',
+          'type' => '',
+          'sec_unit_type' => 'Apt',
+          'prefix' => 'N'
+    },
     "100 South St, Philadelphia, PA" => {
 	      'number' => '100',
 	      'street' => 'South',
@@ -292,6 +316,32 @@ my %address = (
           'prefix' => 'S',
           'sec_unit_type' => 'lobby',
         },
+    "(233 S Wacker Dr lobby 60606)" => { # surrounding punctuation
+          'number' => '233',
+          'street' => 'Wacker',
+          'zip' => '60606',
+          'type' => 'Dr',
+          'prefix' => 'S',
+          'sec_unit_type' => 'lobby',
+        },
+    "#42 233 S Wacker Dr 60606" => { # leading numbered secondary unit type
+          'sec_unit_num' => '42',
+          'zip' => '60606',
+          'number' => '233',
+          'street' => 'Wacker',
+          'sec_unit_type' => '#',
+          'type' => 'Dr',
+          'prefix' => 'S'
+        },
+    "lt42 99 Some Road, Some City LA" => { # no space before sec_unit_num
+          'sec_unit_num' => '42',
+          'city' => 'Some City',
+          'number' => '99',
+          'street' => 'Some',
+          'sec_unit_type' => 'lt',
+          'type' => 'Rd',
+          'state' => 'LA'
+        },
 );
 
 my @failures = (
@@ -313,3 +363,5 @@ for my $fail (@failures) {
     my $parse = Geo::StreetAddress::US->parse_location( $fail );
     ok( !$parse || !defined($parse->{state}), "can't parse $fail" );
 }
+
+done_testing();

@@ -134,7 +134,7 @@ use 5.008_001;
 use strict;
 use warnings;
 
-our $VERSION = '0.99';
+our $VERSION = '1.01';
 
 =head1 GLOBAL VARIABLES
 
@@ -693,12 +693,12 @@ subtle ways between releases.
 
 our %Addr_Match = (
     type    => join("|", keys %_Street_Type_List),
-    number  => qr/\d+-?\d*/,
     fraction => qr{\d+\/\d+},
-    state   => join("|",
+    state   => '\b(?:'.join("|",
         # escape spaces in state names (e.g., "new york" --> "new\\ york")
         # so they still match in the x environment below
-        map { ( quotemeta $_) } keys %State_Code, values %State_Code),
+        map { ( quotemeta $_) } keys %State_Code, values %State_Code
+        ).')\b',
     direct  => join("|",
 		    # map direction names to direction codes
                     keys %Directional,
@@ -716,28 +716,39 @@ our %Addr_Match = (
 {
     use re 'eval';
 
+    # we don't include letters in the number regex because we want to
+    # treat "42S" as "42 S" (42 South). For example,
+    # Utah and Wisconsin have a more elaborate system of block numbering
+    # http://en.wikipedia.org/wiki/House_number#Block_numbers
+    $Addr_Match{number} = qr/(\d+-?\d*) (?{ $_{number} = $^N })/ix,
+
     # note that expressions like [^,]+ may scan more than you expect
     $Addr_Match{street} = qr/
         (?:
           # special case for addresses like 100 South Street
           (?:($Addr_Match{direct})\W+           (?{ $_{street} = $^N })
              ($Addr_Match{type})\b              (?{ $_{type}   = $^N }))
+             #(?{ $_{_street}.=1 })
           |
           (?:($Addr_Match{direct})\W+		(?{ $_{prefix} = $^N }))?
           (?:
+            ([^,]*\d)				(?{ $_{street} = $^N })
+            (?:[^\w,]*($Addr_Match{direct})\b	(?{ $_{suffix} = $^N; $_{type}||='' }))
+            #(?{ $_{_street}.=3 })
+           |
             ([^,]+)				(?{ $_{street} = $^N })
             (?:[^\w,]+($Addr_Match{type})\b	(?{ $_{type}   = $^N }))
             (?:[^\w,]+($Addr_Match{direct})\b	(?{ $_{suffix} = $^N }))?
-           |
-            ([^,]*\d)				(?{ $_{street} = $^N })
-            ($Addr_Match{direct})\b		(?{ $_{suffix} = $^N; $_{type}||='' })
+            #(?{ $_{_street}.=2 })
            |
             ([^,]+?)				(?{ $_{street} = $^N; $_{type}||='' })
             (?:[^\w,]+($Addr_Match{type})\b	(?{ $_{type}   = $^N }))?
             (?:[^\w,]+($Addr_Match{direct})\b	(?{ $_{suffix} = $^N }))?
+            #(?{ $_{_street}.=4 })
           )
         )
 	/ix;
+
 
     # http://www.usps.com/ncsc/lookups/abbreviations.html#secunitdesig
     # TODO add support for those that don't require a number
@@ -751,13 +762,13 @@ our %Addr_Match = (
             |uni?t
             |bu?i?ldi?n?g
             |ha?nga?r
-            |lot
+            |lo?t
             |pier
             |slip
             |spa?ce?
             |stop
             |tra?i?le?r
-            |box)\b				(?{ $_{sec_unit_type}   = $^N })
+            |box)(?![a-z])			(?{ $_{sec_unit_type}   = $^N })
         /ix;
 
     $Addr_Match{sec_unit_type_unnumbered} = qr/
@@ -775,7 +786,7 @@ our %Addr_Match = (
 
     $Addr_Match{sec_unit} = qr/
         (:?
-            (?: (?:$Addr_Match{sec_unit_type_numbered} \W+)
+            (?: (?:$Addr_Match{sec_unit_type_numbered} \W*)
                 | (\#)\W*                       (?{ $_{sec_unit_type}   = $^N })
             )
             (  [\w-]+)				(?{ $_{sec_unit_num}    = $^N })
@@ -796,22 +807,30 @@ our %Addr_Match = (
 	(?:($Addr_Match{zip})			(?{ $_{zip}    = $^N }))?
 	/ix;
 
-    $Addr_Match{address} = qr/^\W*
-	(  $Addr_Match{number})\W*		(?{ $_{number} = $^N })
+    $Addr_Match{address} = qr/
+        ^
+        [^\w\#]*    # skip non-word chars except # (eg unit)
+	(  $Addr_Match{number} )\W*
         (?:$Addr_Match{fraction}\W*)?
 	   $Addr_Match{street}\W+
 	(?:$Addr_Match{sec_unit}\W+)?
 	   $Addr_Match{place}
-	\W*$/ix;
+	\W*         # require on non-word chars at end
+        $           # right up to end of string
+        /ix;
+
+    my $sep = qr/(?:\W+|\Z)/;
 
     $Addr_Match{informal_address} = qr/
-        ^\s*
-        (?:$Addr_Match{sec_unit}\W+)?
-        (  $Addr_Match{number})?\W*             (?{ $_{number} = $^N })
+        ^
+        \s*         # skip leading whitespace
+        (?:$Addr_Match{sec_unit} $sep)?
+        (?:$Addr_Match{number})?\W*
         (?:$Addr_Match{fraction}\W*)?
-           $Addr_Match{street}\W+
-        (?:$Addr_Match{sec_unit}\W+)?
+           $Addr_Match{street} $sep
+        (?:$Addr_Match{sec_unit} $sep)?
         (?:$Addr_Match{place})?
+        # don't require match to reach end of string
         /ix;
 
     $Addr_Match{intersection} = qr/^\W*
@@ -979,9 +998,11 @@ is a problem and I'll see what I can do to fix it.
 
 sub normalize_address {
     my ($class, $part) = @_;
+
+    #m/^_/ and delete $part->{$_} for keys %$part; # for debug
     
-    # strip off punctuation
-    defined($_) && s/^\s+|\s+$|[^\w\s\-]//gos for values %$part;
+    # strip off some punctuation
+    defined($_) && s/^\s+|\s+$|[^\w\s\-\#\&]//gos for values %$part;
 
     if ($Old_Undef_Fields_Behaviour) {
         my @undef_fields = (exists $part->{street1})
@@ -1028,6 +1049,12 @@ behaviors which were designed for Geo::Coder::US, but which may not be right
 for your purposes. If this turns out to be the case, please let me know.
 
 Geo::StreetAddress::US does B<NOT> perform USPS-certified address normalization.
+
+Grid based addresses, like those in Utah, where the direction comes before the
+number, e.g. W164N5108 instead of 164 W 5108 N, aren't handled at the moment.
+A workaround is to apply a regex like this
+
+    s/([nsew])\s*(\d+)\s*([nsew])\s*(\d+)/$2 $1 $4 $3/
 
 =head1 SEE ALSO
 
