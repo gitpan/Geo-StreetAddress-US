@@ -44,7 +44,7 @@ names and secondary unit designators.
 Most Geo::StreetAddress::US methods return a reference to a hash containing
 address or intersection information. This
 "address specifier" hash may contain any of the following fields for a
-given address. If a given field is not present in the address, the 
+given address. If a given field is not present in the address, the
 corresponding key will be set to C<undef> in the hash.
 
 Future versions of this module may add extra fields.
@@ -67,7 +67,7 @@ Name of the street, without directional or type qualifiers.
 =head2 type
 
 Abbreviated street type, e.g. Rd, St, Ave, etc. See the USPS official
-type abbreviations at L<http://www.usps.com/ncsc/lookups/abbr_suffix.txt> 
+type abbreviations at L<http://pe.usps.com/text/pub28/pub28apc.html>
 for a list of abbreviations used.
 
 =head2 suffix
@@ -81,8 +81,7 @@ Name of the city, town, or other locale that the address is situated in.
 =head2 state
 
 The state which the address is situated in, given as its two-letter
-postal abbreviation. See L<http://www.usps.com/ncsc/lookups/abbr_state.txt>
-for a list of abbreviations used.
+postal abbreviation.  for a list of abbreviations used.
 
 =head2 zip
 
@@ -128,13 +127,13 @@ State abbreviation, as above.
 
 Five digit ZIP code, as above.
 
-=cut 
+=cut
 
 use 5.008_001;
 use strict;
 use warnings;
 
-our $VERSION = '1.01';
+our $VERSION = '1.02';
 
 =head1 GLOBAL VARIABLES
 
@@ -142,6 +141,8 @@ Geo::StreetAddress::US contains a number of global variables which it
 uses to recognize different bits of US street addresses. Although you
 will probably not need them, they are documented here for completeness's
 sake.
+
+=cut
 
 =head2 %Directional
 
@@ -164,7 +165,7 @@ our %Directional = (
     northwest	=> "NW",
 );
 
-our %Direction_Code = reverse %Directional;
+our %Direction_Code; # setup in init();
 
 =head2 %Street_Type
 
@@ -539,7 +540,7 @@ our %Street_Type = (
     wy		=> "way",
 );
 
-our %_Street_Type_List = map { $_ => 1 } %Street_Type; 
+our %_Street_Type_List;	# set up in init() later;
 
 =head2 %State_Code
 
@@ -677,7 +678,7 @@ our %State_FIPS = (
     "78" => "VI",
 );
 
-our %FIPS_State = reverse %State_FIPS;
+our %FIPS_State; # setup in init() later;
 
 =head2 %Addr_Match
 
@@ -691,30 +692,80 @@ subtle ways between releases.
 
 =cut
 
-our %Addr_Match = (
-    type    => join("|", keys %_Street_Type_List),
-    fraction => qr{\d+\/\d+},
-    state   => '\b(?:'.join("|",
-        # escape spaces in state names (e.g., "new york" --> "new\\ york")
-        # so they still match in the x environment below
-        map { ( quotemeta $_) } keys %State_Code, values %State_Code
-        ).')\b',
-    direct  => join("|",
-		    # map direction names to direction codes
-                    keys %Directional,
-		    # also map the dotted version of the code to the code itself
-                    map { my $c = $_;
-                          $c =~ s/(\w)/$1./g;
-                          ( quotemeta $c, $_ ) }
-                    sort { length $b <=> length $a }
-                    values %Directional),
-    dircode => join("|", keys %Direction_Code), 
-    zip	    => qr/\d{5}(?:-?\d{4})?/,  # XXX add \b?
-    corner  => qr/(?:\band\b|\bat\b|&|\@)/i,
+our %Addr_Match; # setup in init()
+
+init();
+
+our %Normalize_Map = (
+    prefix  => \%Directional,
+    prefix1 => \%Directional,
+    prefix2 => \%Directional,
+    suffix  => \%Directional,
+    suffix1 => \%Directional,
+    suffix2 => \%Directional,
+    type    => \%Street_Type,
+    type1   => \%Street_Type,
+    type2   => \%Street_Type,
+    state   => \%State_Code,
 );
 
-{
+=head2 $Old_Undef_Fields_Behaviour
+
+Restores the pre version 1.00 behaviour for unmatched fields.
+Normally unmatched fields don't exist in the result hash.  If this variable is
+set true, some unmatched fields are returned with undef values, instead of not
+existing in the hash at all.  This mechanism is a temporary measure to aid
+migration and may be removed in a future version.
+
+=cut
+
+our $Old_Undef_Fields_Behaviour = 0;
+
+=head1 CLASS METHODS
+
+=head2 init
+
+    # Add another street type mapping:
+    $Geo::StreetAddress::US::Street_Type{'cur'}='curv';
+    # Re-initialize to pick up the change
+    Geo::StreetAddress::US::init();
+
+Runs the setup on globals.  This is run automatically when the module is loaded,
+but if you subsequently change the globals, you should run it again.
+
+=cut
+
+sub init {
+
+    %Direction_Code = reverse %Directional;
+
+    %_Street_Type_List = map { $_ => 1 } %Street_Type;
+
+    %FIPS_State = reverse %State_FIPS;
+
     use re 'eval';
+
+    %Addr_Match = (
+        type    => join("|", keys %_Street_Type_List),
+        fraction => qr{\d+\/\d+},
+        state   => '\b(?:'.join("|",
+   		    # escape spaces in state names (e.g., "new york" --> "new\\ york")
+	        # so they still match in the x environment below
+            map { ( quotemeta $_) } keys %State_Code, values %State_Code
+            ).')\b',
+        direct  => join("|",
+			    # map direction names to direction codes
+                        keys %Directional,
+			    # also map the dotted version of the code to the code itself
+                        map { my $c = $_;
+                              $c =~ s/(\w)/$1./g;
+                              ( quotemeta $c, $_ ) }
+                        sort { length $b <=> length $a }
+                        values %Directional),
+        dircode => join("|", keys %Direction_Code),
+        zip	    => qr/\d{5}(?:-?\d{4})?/,  # XXX add \b?
+        corner  => qr/(?:\band\b|\bat\b|&|\@)/i,
+    );
 
     # we don't include letters in the number regex because we want to
     # treat "42S" as "42 S" (42 South). For example,
@@ -750,7 +801,7 @@ our %Addr_Match = (
 	/ix;
 
 
-    # http://www.usps.com/ncsc/lookups/abbreviations.html#secunitdesig
+    # http://pe.usps.com/text/pub28/pub28c2_003.htm
     # TODO add support for those that don't require a number
     # TODO map to standard names/abbreviations
     $Addr_Match{sec_unit_type_numbered} = qr/
@@ -845,33 +896,6 @@ our %Addr_Match = (
 	   $Addr_Match{place}
 	\W*$/ix;
 }
-
-our %Normalize_Map = (
-    prefix  => \%Directional,
-    prefix1 => \%Directional,
-    prefix2 => \%Directional,
-    suffix  => \%Directional,
-    suffix1 => \%Directional,
-    suffix2 => \%Directional,
-    type    => \%Street_Type,
-    type1   => \%Street_Type,
-    type2   => \%Street_Type,
-    state   => \%State_Code,
-);
-
-=head2 $Old_Undef_Fields_Behaviour
-
-Restores the pre version 1.00 behaviour for unmatched fields.
-Normally unmatched fields don't exist in the result hash.  If this variable is
-set true, some unmatched fields are returned with undef values, instead of not
-existing in the hash at all.  This mechanism is a temporary measure to aid
-migration and may be removed in a future version.
-
-=cut
-
-our $Old_Undef_Fields_Behaviour = 0;
-
-=head1 CLASS METHODS
 
 =head2 parse_location
 
@@ -1000,7 +1024,7 @@ sub normalize_address {
     my ($class, $part) = @_;
 
     #m/^_/ and delete $part->{$_} for keys %$part; # for debug
-    
+
     # strip off some punctuation
     defined($_) && s/^\s+|\s+$|[^\w\s\-\#\&]//gos for values %$part;
 
@@ -1017,7 +1041,7 @@ sub normalize_address {
 	      and exists $map->{lc $part->{$key}};
     }
 
-    $part->{$_} = ucfirst lc $part->{$_} 
+    $part->{$_} = ucfirst lc $part->{$_}
 	for grep(exists $part->{$_}, qw( type type1 type2 ));
 
     # attempt to expand directional prefixes on place names
