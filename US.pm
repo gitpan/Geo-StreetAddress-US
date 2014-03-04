@@ -4,7 +4,7 @@ use 5.008_001;
 use strict;
 use warnings;
 
-our $VERSION = '1.03';
+our $VERSION = '1.04';
 
 use base 'Class::Data::Inheritable';
 
@@ -792,7 +792,7 @@ sub init {
     # treat "42S" as "42 S" (42 South). For example,
     # Utah and Wisconsin have a more elaborate system of block numbering
     # http://en.wikipedia.org/wiki/House_number#Block_numbers
-    $Addr_Match{number} = qr/(\d+-?\d*) (?{ $_{number} = $^N })/ix,
+    $Addr_Match{number} = qr/(\d+-?\d*)(?=\D) (?{ $_{number} = $^N })/ix,
 
     # note that expressions like [^,]+ may scan more than you expect
     $Addr_Match{street} = qr/
@@ -879,9 +879,11 @@ sub init {
         (?:($Addr_Match{zip})        (?{ $_{zip}    = $^N }))?
         /ix;
 
+    # the \x23 below is an alias for '#' to avoid a bug in perl 5.18.1
+    # https://rt.cpan.org/Ticket/Display.html?id=91420
     $Addr_Match{address} = qr/
         ^
-        [^\w\#]*    # skip non-word chars except # (eg unit)
+        [^\w\x23]*    # skip non-word chars except # (eg unit)
         (  $Addr_Match{number} )\W*
         (?:$Addr_Match{fraction}\W*)?
            $Addr_Match{street}\W+
@@ -1051,7 +1053,7 @@ sub normalize_address {
 
     while (my ($key, $map) = each %Normalize_Map) {
         $part->{$key} = $map->{lc $part->{$key}}
-              if  exists $part->{$key}
+              if  defined $part->{$key}
               and exists $map->{lc $part->{$key}};
     }
 
